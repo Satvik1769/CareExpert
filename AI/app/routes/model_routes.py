@@ -6,9 +6,13 @@ import joblib
 import pandas as pd
 import numpy as np
 import os
+import firebase_admin
+from firebase_admin import  auth
+
 # Database setup
 client = connection()
 users = client.collection("users")
+user_data = client.collection("user_data")
 
 base_dir = os.path.dirname(__file__)
 print(list(os.walk(base_dir)))
@@ -25,7 +29,7 @@ model_bp = Blueprint('auth', __name__)
 @model_bp.route('/data', methods=['POST'])
 def add_patient():
     data = request.json
-    required_fields = ["disease", "fever", "cough", "fatigue", "difficulty_breathing", "age", "gender", "blood_pressure", "cholesterol"]
+    required_fields = ["fever", "cough", "fatigue", "difficulty_breathing", "age", "gender", "blood_pressure", "cholesterol"]
 
     # Check if all required fields are in the request
     for field in required_fields:
@@ -41,7 +45,7 @@ def add_patient():
         "cough": data["cough"],
         "fatigue": data["fatigue"],
         "difficulty_breathing": data["difficulty_breathing"],
-        "age": data["age"],
+        "age": int(data["age"]),
         "gender": data["gender"],
         "blood_pressure": data["blood_pressure"],
         "cholesterol": data["cholesterol"],
@@ -80,8 +84,52 @@ def add_patient():
     predicted_class = ml.predict(user_input_scaled)
     predicted_label = label_encoder.inverse_transform(predicted_class)
 
-    return jsonify({"message": f"The predicted disease class is: {predicted_label[0]}"}), 201
+    return jsonify({"message": f"You have {predicted_label[0]}"}), 201
 
+@model_bp.route('/signup', methods=['POST'])
+def signup():
+    data = request.json
+    email = data.get('email')
+    password = data.get('password')
+    name = data.get('name')
+
+    # Check if email already exists in Firestore
+    query = user_data.where('email', '==', email).get()
+    if query:
+        return jsonify({"error": "User already exists"}), 400
+
+    # Hash the password and save to Firestore
+    user_data.document(email).set({
+        'email': email,
+        'password': password,
+        'name': name
+    })
+
+    return jsonify({"message": "User created successfully", "status": 201}), 201
+
+# Login Route
+@model_bp.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    email = data.get('email')
+    password = data.get('password')
+
+    # Reference the 'user_data' collection in Firestore
+    
+    # Check if email exists in Firestore
+    user_doc = user_data.document(email).get()
+    if not user_doc.exists:
+        return jsonify({"message": "User not found", "status": 404}), 404
+
+    # Get the stored hashed password from Firestore
+    data = user_doc.to_dict()
+    stored_password_hash = data.get('password')
+
+    # Verify the password using werkzeug's check_password_hash
+    if password == stored_password_hash:
+        return jsonify({"message": "Login successful", "status": 200}), 200
+    else:
+        return jsonify({"message": "Invalid password", "status": 401}), 401
 @model_bp.route('/', methods=['GET'])
 def index():
     return jsonify({'message': 'Welcome to the Model API'}), 200
